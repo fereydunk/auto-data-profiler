@@ -35,6 +35,9 @@ class Config:
     # Review API (local)
     REVIEW_API_URL: str = os.getenv("REVIEW_API_URL", "http://localhost:8001")
 
+    # Profiler service (local) — set to empty string to disable profiling
+    PROFILER_URL: str = os.getenv("PROFILER_URL", "http://localhost:8002")
+
     # Classification depth: 1 = field name only, 2 = +regex, 3 = +AI (default)
     MAX_LAYER: int = int(os.getenv("MAX_LAYER", "3"))
 

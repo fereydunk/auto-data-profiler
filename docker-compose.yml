@@ -52,6 +52,8 @@ services:
         condition: service_healthy
       review-api:
         condition: service_healthy
+      profiler:
+        condition: service_healthy
     environment:
       - CONFLUENT_BOOTSTRAP_SERVERS=${CONFLUENT_BOOTSTRAP_SERVERS}
       - CONFLUENT_API_KEY=${CONFLUENT_API_KEY}
@@ -67,9 +69,28 @@ services:
       - CONSUMER_GROUP=${CONSUMER_GROUP:-auto-data-classifier}
       - CLASSIFIER_URL=http://classifier:8000
       - REVIEW_API_URL=http://review-api:8001
+      - PROFILER_URL=http://profiler:8002
       - MAX_LAYER=${MAX_LAYER:-3}
+    restart: unless-stopped
+
+  profiler:
+    build:
+      context: ./profiler
+    container_name: profiler
+    ports:
+      - "8002:8002"
+    environment:
+      - PROFILER_DB_PATH=/data/profiles.db
+    volumes:
+      - profiles-db:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
     restart: unless-stopped
 
 volumes:
   huggingface-cache:
   recommendations-db:
+  profiles-db:

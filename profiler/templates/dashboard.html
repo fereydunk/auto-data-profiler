@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auto Data Profiler</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f4f5f7;
+      color: #1a1a2e;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Top bar ── */
+    .topbar {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 0 24px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .topbar h1 { font-size: 16px; font-weight: 700; letter-spacing: 0.3px; white-space: nowrap; }
+    .topbar select {
+      padding: 5px 10px;
+      border-radius: 5px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 200px;
+    }
+    .topbar select option { background: #1a1a2e; }
+    .topbar-chip {
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.15);
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .topbar-spacer { flex: 1; }
+
+    /* ── Layout ── */
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Field list (left panel) ── */
+    .field-list {
+      width: 270px;
+      flex-shrink: 0;
+      background: #fff;
+      border-right: 1px solid #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .field-list-header {
+      padding: 10px 14px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #888;
+      border-bottom: 1px solid #f0f0f0;
+      background: #fafafa;
+    }
+    .field-list-body { overflow-y: auto; flex: 1; }
+    .field-item {
+      padding: 10px 14px;
+      border-bottom: 1px solid #f5f5f5;
+      cursor: pointer;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      transition: background 0.1s;
+    }
+    .field-item:hover  { background: #f8f9ff; }
+    .field-item.active { background: #eef2ff; border-left: 3px solid #4f5bd5; padding-left: 11px; }
+    .field-item-text   { flex: 1; min-width: 0; }
+    .field-name        { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .field-sub         { font-size: 11px; color: #999; margin-top: 2px; }
+    .field-badges      { display: flex; flex-direction: column; gap: 3px; align-items: flex-end; flex-shrink: 0; }
+
+    /* ── Badges ── */
+    .badge {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+    }
+    .badge-high   { background: #fde8e8; color: #c0392b; }
+    .badge-medium { background: #fef3e2; color: #d68910; }
+    .badge-low    { background: #e8f5e9; color: #27ae60; }
+    .badge-tag    { background: #eef2ff; color: #4f5bd5; font-weight: 600; }
+    .badge-type   { background: #f0f4f8; color: #666; font-weight: 500; }
+
+    /* ── Detail panel (right) ── */
+    .detail {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    /* ── Empty / placeholder ── */
+    .placeholder {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #bbb;
+      gap: 10px;
+    }
+    .placeholder-icon { font-size: 48px; }
+    .placeholder-text { font-size: 15px; }
+
+    .loading-msg { padding: 20px 14px; color: #aaa; font-size: 13px; text-align: center; }
+
+    /* ── Detail header ── */
+    .detail-header h2 { font-size: 20px; font-weight: 700; margin-bottom: 8px; word-break: break-all; }
+    .detail-header-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+
+    /* ── Stats grid ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 10px;
+    }
+    .stat-card {
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .stat-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #999; margin-bottom: 4px; }
+    .stat-value { font-size: 18px; font-weight: 700; color: #1a1a2e; }
+    .stat-unit  { font-size: 11px; color: #aaa; font-weight: 400; margin-left: 2px; }
+
+    /* ── Chart card ── */
+    .chart-card {
+      background: #fff;
+      border: 1px solid #e8e8e8;
+      border-radius: 8px;
+      padding: 18px 20px;
+    }
+    .chart-card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #555;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .chart-container { position: relative; }
+
+    /* ── AI summary card ── */
+    .summary-card {
+      background: #f0f4ff;
+      border: 1px solid #c8d3f5;
+      border-radius: 8px;
+      padding: 14px 18px;
+    }
+    .summary-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #4f5bd5;
+      margin-bottom: 8px;
+    }
+    .summary-text { font-size: 13px; line-height: 1.65; color: #333; }
+
+    /* ── Privacy notice ── */
+    .privacy-notice {
+      background: #fff8e1;
+      border: 1px solid #ffe082;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 12px;
+      color: #7a6000;
+    }
+
+    /* ── Box plot strip ── */
+    .boxplot-strip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 0;
+      font-size: 11px;
+      color: #888;
+      overflow-x: auto;
+    }
+    .boxplot-stat { text-align: center; min-width: 50px; }
+    .boxplot-stat-val { font-size: 13px; font-weight: 700; color: #1a1a2e; display: block; }
+    .boxplot-sep { width: 1px; height: 30px; background: #e0e0e0; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <h1>Auto Data Profiler</h1>
+    <select id="topicSelect" onchange="loadTopic(this.value)">
+      <option value="">Select a topic…</option>
+    </select>
+    <div class="topbar-spacer"></div>
+    <span class="topbar-chip" id="chipMessages" style="display:none"></span>
+    <span class="topbar-chip" id="chipScanned"  style="display:none"></span>
+  </div>
+
+  <!-- Main layout -->
+  <div class="layout">
+
+    <!-- Left: field list -->
+    <div class="field-list">
+      <div class="field-list-header">Fields</div>
+      <div class="field-list-body" id="fieldListBody">
+        <div class="loading-msg">Select a topic to begin</div>
+      </div>
+    </div>
+
+    <!-- Right: detail -->
+    <div class="detail" id="detail">
+      <div class="placeholder">
+        <div class="placeholder-icon">📊</div>
+        <div class="placeholder-text">Select a field to view its profile</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let profiles = [];
+    let activeChart = null;
+    const SENS_ORDER = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+    const SENS_CLASS = { HIGH: 'badge-high', MEDIUM: 'badge-medium', LOW: 'badge-low' };
+
+    // ── Init: load topic list ──────────────────────────────────────────────────
+    async function init() {
+      try {
+        const topics = await fetchJSON('/topics');
+        const sel = document.getElementById('topicSelect');
+        topics.forEach(t => {
+          const o = document.createElement('option');
+          o.value = t; o.textContent = t;
+          sel.appendChild(o);
+        });
+        if (topics.length === 1) {
+          sel.value = topics[0];
+          loadTopic(topics[0]);
+        }
+      } catch (e) {
+        console.error('Failed to load topics', e);
+      }
+    }
+
+    // ── Load all profiles for a topic ─────────────────────────────────────────
+    async function loadTopic(topic) {
+      if (!topic) return;
+      document.getElementById('fieldListBody').innerHTML = '<div class="loading-msg">Loading…</div>';
+      setDetail('<div class="placeholder"><div class="placeholder-icon">📊</div><div class="placeholder-text">Select a field to view its profile</div></div>');
+
+      profiles = await fetchJSON(`/profiles?topic=${encodeURIComponent(topic)}`);
+      if (!profiles.length) {
+        document.getElementById('fieldListBody').innerHTML = '<div class="loading-msg">No profiles found for this topic</div>';
+        return;
+      }
+
+      // Sort HIGH → MEDIUM → LOW then alphabetically
+      profiles.sort((a, b) => {
+        const sd = (SENS_ORDER[a.sensitivity] || 0) - (SENS_ORDER[b.sensitivity] || 0);
+        return sd !== 0 ? sd : a.field_path.localeCompare(b.field_path);
+      });
+
+      // Top bar chips
+      const sampleSize = profiles[0]?.sample_size ?? 0;
+      const latestScan = profiles.map(p => p.scanned_at).sort().reverse()[0] ?? '';
+      chip('chipMessages', `${sampleSize.toLocaleString()} messages sampled`);
+      chip('chipScanned',  `Scanned ${latestScan.replace('T',' ').replace('Z',' UTC')}`);
+
+      // Render field list
+      const body = document.getElementById('fieldListBody');
+      body.innerHTML = '';
+      profiles.forEach((p, idx) => {
+        const el = document.createElement('div');
+        el.className = 'field-item';
+        el.dataset.idx = idx;
+        el.innerHTML = `
+          <div class="field-item-text">
+            <div class="field-name" title="${p.field_path}">${p.field_path}</div>
+            <div class="field-sub">${p.field_type} · ${p.sample_size.toLocaleString()} samples</div>
+          </div>
+          <div class="field-badges">
+            <span class="badge ${SENS_CLASS[p.sensitivity]}">${p.sensitivity}</span>
+            <span class="badge badge-tag">${p.tag}</span>
+          </div>`;
+        el.addEventListener('click', () => showProfile(idx, el));
+        body.appendChild(el);
+      });
+    }
+
+    // ── Render detail panel for selected field ─────────────────────────────────
+    function showProfile(idx, el) {
+      document.querySelectorAll('.field-item').forEach(e => e.classList.remove('active'));
+      el.classList.add('active');
+      if (activeChart) { activeChart.destroy(); activeChart = null; }
+
+      const p = profiles[idx];
+      const isNumeric = p.field_type === 'numeric';
+      const isCat     = p.field_type === 'categorical' || p.field_type === 'boolean';
+      const isText    = p.field_type === 'string' || p.field_type === 'freetext';
+
+      // ── Stats cards ──
+      const stats = [];
+      const addStat = (label, val, unit = '') => {
+        if (val == null) return;
+        stats.push(`<div class="stat-card"><div class="stat-label">${label}</div><div class="stat-value">${val}<span class="stat-unit">${unit}</span></div></div>`);
+      };
+      addStat('Sample size', p.sample_size.toLocaleString());
+      addStat('Null rate',   pct(p.null_rate));
+      if (isNumeric) {
+        addStat('Median',  fmt(p.stat_median));
+        addStat('Mean',    fmt(p.stat_mean));
+        addStat('Std dev', fmt(p.stat_stddev));
+        addStat('Min',     fmt(p.stat_min));
+        addStat('Max',     fmt(p.stat_max));
+        addStat('P25',     fmt(p.stat_p25));
+        addStat('P75',     fmt(p.stat_p75));
+        addStat('P95',     fmt(p.stat_p95));
+        if (p.stat_zero_rate != null) addStat('Zero rate', pct(p.stat_zero_rate));
+      }
+      if (isText) {
+        addStat('Min length', p.stat_min);
+        addStat('Max length', p.stat_max);
+        addStat('Avg length', p.stat_mean);
+      }
+      if (p.field_type === 'freetext') {
+        addStat('Min words', p.stat_min);
+        addStat('Max words', p.stat_max);
+        addStat('Avg words', p.stat_mean);
+      }
+
+      // ── Box plot strip (numeric only) ──
+      let boxHTML = '';
+      if (isNumeric && p.stat_min != null) {
+        boxHTML = `
+          <div class="boxplot-strip">
+            ${boxStat('Min',    fmt(p.stat_min))}
+            <div class="boxplot-sep"></div>
+            ${boxStat('P25',    fmt(p.stat_p25))}
+            <div class="boxplot-sep"></div>
+            ${boxStat('Median', fmt(p.stat_median))}
+            <div class="boxplot-sep"></div>
+            ${boxStat('P75',    fmt(p.stat_p75))}
+            <div class="boxplot-sep"></div>
+            ${boxStat('P95',    fmt(p.stat_p95))}
+            <div class="boxplot-sep"></div>
+            ${boxStat('Max',    fmt(p.stat_max))}
+          </div>`;
+      }
+
+      // ── Chart config ──
+      const chartTitle = isNumeric ? 'Value Distribution'
+                       : isCat     ? 'Value Frequency'
+                       : p.field_type === 'freetext' ? 'Word Count Distribution'
+                       : 'Length Distribution (characters)';
+      const horizontal = isCat;
+      const color = p.sensitivity === 'HIGH'   ? 'rgba(192, 57, 43, 0.72)'
+                  : p.sensitivity === 'MEDIUM' ? 'rgba(214, 137, 16, 0.72)'
+                  : 'rgba(39, 174, 96, 0.72)';
+      const colorBorder = color.replace('0.72)', '0.95)');
+
+      // ── Privacy notice ──
+      const privacyHTML = p.sensitivity === 'HIGH'
+        ? `<div class="privacy-notice">🔒 HIGH sensitivity field — actual values are not shown. Distribution displays aggregate bucket counts only.</div>`
+        : '';
+
+      // ── AI summary ──
+      const summaryHTML = p.ai_summary
+        ? `<div class="summary-card"><div class="summary-label">AI Summary</div><div class="summary-text">${escapeHtml(p.ai_summary)}</div></div>`
+        : '';
+
+      // ── Assemble ──
+      const chartHeight = horizontal
+        ? Math.max(180, Math.min(p.histogram.length * 32 + 20, 500))
+        : 240;
+
+      setDetail(`
+        <div class="detail-header">
+          <h2>${escapeHtml(p.field_path)}</h2>
+          <div class="detail-header-badges">
+            <span class="badge ${SENS_CLASS[p.sensitivity]}">${p.sensitivity} SENSITIVITY</span>
+            <span class="badge badge-tag">${p.tag}</span>
+            <span class="badge badge-type">${p.field_type}</span>
+          </div>
+        </div>
+
+        ${privacyHTML}
+        ${summaryHTML}
+
+        <div class="stats-grid">${stats.join('')}</div>
+
+        ${p.histogram?.length ? `
+          <div class="chart-card">
+            <div class="chart-card-title">${chartTitle}</div>
+            ${boxHTML}
+            <div class="chart-container" style="height:${chartHeight}px">
+              <canvas id="mainChart"></canvas>
+            </div>
+          </div>
+        ` : '<div style="color:#aaa;font-size:13px;padding:8px 0">No distribution data available for this field.</div>'}
+      `);
+
+      // Render chart
+      if (p.histogram?.length) {
+        const ctx = document.getElementById('mainChart').getContext('2d');
+        activeChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: p.histogram.map(b => b.label),
+            datasets: [{
+              label: 'Records',
+              data: p.histogram.map(b => b.count),
+              backgroundColor: color,
+              borderColor: colorBorder,
+              borderWidth: 1,
+              borderRadius: 3,
+            }]
+          },
+          options: {
+            indexAxis: horizontal ? 'y' : 'x',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: (ctx) => {
+                    const b = p.histogram[ctx.dataIndex];
+                    return ` ${b.count.toLocaleString()} records (${b.pct}%)`;
+                  }
+                }
+              }
+            },
+            scales: {
+              x: { grid: { color: '#f0f0f0' }, ticks: { font: { size: 11 } } },
+              y: { grid: { color: '#f0f0f0' }, ticks: { font: { size: 11 } } }
+            }
+          }
+        });
+      }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    async function fetchJSON(url) {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }
+
+    function setDetail(html) {
+      if (activeChart) { activeChart.destroy(); activeChart = null; }
+      document.getElementById('detail').innerHTML = html;
+    }
+
+    function chip(id, text) {
+      const el = document.getElementById(id);
+      el.textContent = text;
+      el.style.display = '';
+    }
+
+    function fmt(v) {
+      if (v == null) return null;
+      if (Math.abs(v) >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+      if (Math.abs(v) < 0.01)  return v.toExponential(2);
+      return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+
+    function pct(v) { return v == null ? null : (v * 100).toFixed(1) + '%'; }
+
+    function boxStat(label, val) {
+      return `<div class="boxplot-stat"><span class="boxplot-stat-val">${val ?? '—'}</span>${label}</div>`;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ── Boot ─────────────────────────────────────────────────────────────────
+    init();
+  </script>
+</body>
+</html>

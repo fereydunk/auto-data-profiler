@@ -9,6 +9,7 @@ import json
 import logging
 import signal
 import struct
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import httpx
@@ -148,6 +149,72 @@ def _delivery_report(err, msg):
 
 
 # ---------------------------------------------------------------------------
+# Profiler integration
+# ---------------------------------------------------------------------------
+def _get_field_value(payload: Dict[str, Any], field_path: str) -> Any:
+    """
+    Extract a value from a flat or nested payload using dot notation.
+    Tries direct key lookup first; falls back to dot-separated path traversal.
+    """
+    if field_path in payload:
+        return payload[field_path]
+    parts = field_path.split(".")
+    v: Any = payload
+    for part in parts:
+        if not isinstance(v, dict):
+            return None
+        v = v.get(part)
+        if v is None:
+            return None
+    return v
+
+
+def accumulate_profiler(
+    payload: Dict[str, Any],
+    detected_entities: Dict[str, Any],
+    buffer: Dict[str, Any],
+) -> None:
+    """
+    Add each detected field's raw value and best-confidence tag to the buffer.
+    Called synchronously inside the process() task — no await, no contention.
+    """
+    for field_path, entities in detected_entities.items():
+        if not entities:
+            continue
+        raw_value = _get_field_value(payload, field_path)
+        if raw_value is None:
+            continue
+        best = max(entities, key=lambda e: e.get("score", 0))
+        tag = best.get("tag", "PII")
+        if field_path not in buffer:
+            buffer[field_path] = {"tag": tag, "values": []}
+        buffer[field_path]["values"].append(raw_value)
+
+
+async def post_profiler_batch(
+    client: httpx.AsyncClient,
+    topic: str,
+    buffer: Dict[str, Any],
+) -> None:
+    """
+    POST accumulated field values to the profiler service. Best-effort — a
+    failure here is logged but never propagates to the Kafka commit loop.
+    """
+    if not buffer or not cfg.PROFILER_URL:
+        return
+    scanned_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        await client.post(
+            f"{cfg.PROFILER_URL}/profiles/compute",
+            json={"topic": topic, "scanned_at": scanned_at, "fields": buffer},
+            timeout=10.0,
+        )
+        logger.debug("Profiler: updated %d field(s) for topic %s", len(buffer), topic)
+    except httpx.HTTPError as e:
+        logger.warning("Profiler call failed: %s", e)
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 async def post_recommendations(
@@ -221,6 +288,7 @@ async def run():
 
     async with httpx.AsyncClient() as http_client:
         pending: list[asyncio.Task] = []
+        profiler_buffer: Dict[str, Any] = {}
 
         while not shutdown.is_set():
             msg = consumer.poll(timeout=1.0)
@@ -232,6 +300,9 @@ async def run():
                     pending.clear()
                     producer.flush()
                     consumer.commit(asynchronous=False)
+                    if profiler_buffer:
+                        await post_profiler_batch(http_client, cfg.SOURCE_TOPIC, profiler_buffer.copy())
+                        profiler_buffer.clear()
                 continue
             if msg.error():
                 if msg.error().code() == KafkaError._PARTITION_EOF:
@@ -256,12 +327,14 @@ async def run():
                     if result:
                         route_message(producer, p, result, k)
 
-                        # Post recommendations to the review API (non-blocking best-effort)
                         detected = result.get("detected_entities", {})
                         if detected:
+                            # Post recommendations to the review API (best-effort)
                             await post_recommendations(
                                 http_client, cfg.SOURCE_TOPIC, detected, sid
                             )
+                            # Accumulate raw values for the profiler batch
+                            accumulate_profiler(p, detected, profiler_buffer)
                     else:
                         logger.warning("Classification failed — message skipped")
 
@@ -273,12 +346,17 @@ async def run():
                 pending.clear()
                 producer.flush()
                 consumer.commit(asynchronous=False)
+                if profiler_buffer:
+                    await post_profiler_batch(http_client, cfg.SOURCE_TOPIC, profiler_buffer.copy())
+                    profiler_buffer.clear()
 
         # Drain remaining
         if pending:
             await asyncio.gather(*pending)
         producer.flush()
         consumer.commit(asynchronous=False)
+        if profiler_buffer:
+            await post_profiler_batch(http_client, cfg.SOURCE_TOPIC, profiler_buffer.copy())
         consumer.close()
         logger.info("Pipeline shut down cleanly.")
 

@@ -209,7 +209,29 @@ def classify_fields(classifier_url: str, max_layer: int, fields: dict) -> list:
     return results
 
 
-def run(bootstrap, api_key, api_secret, source_topic, classifier_url, max_layer, count):
+def post_to_profiler(profiler_url: str, topic: str, buffer: dict, scanned_at: str) -> None:
+    """POST accumulated field values to the profiler service. Best-effort."""
+    body = json.dumps({
+        "topic": topic,
+        "scanned_at": scanned_at,
+        "fields": buffer,
+    }).encode()
+    url = profiler_url.rstrip("/") + "/profiles/compute"
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read())
+        print(f"  [profiler] stored profiles for {result.get('profiled', 0)} field(s)")
+    except Exception as e:
+        print(f"  [warn] profiler call failed: {e}", file=sys.stderr)
+
+
+def run(bootstrap, api_key, api_secret, source_topic, classifier_url, max_layer, count, profiler_url=""):
     kafka_conf = {
         "bootstrap.servers":  bootstrap,
         "security.protocol":  "SASL_SSL",
@@ -234,9 +256,10 @@ def run(bootstrap, api_key, api_secret, source_topic, classifier_url, max_layer,
     print(f"Writing results to: {results_topic}")
     print()
 
-    processed   = 0
-    total_tags  = 0
-    tag_summary: dict = {}  # tag → count
+    processed      = 0
+    total_tags     = 0
+    tag_summary: dict = {}   # tag → count
+    profiler_buffer: dict = {}  # field_path → {"tag": str, "values": list}
     # One batch timestamp for the entire run so apply_tags.py sees all results together
     scanned_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -287,6 +310,16 @@ def run(bootstrap, api_key, api_secret, source_topic, classifier_url, max_layer,
                     )
                     tag_summary[r["tag"]] = tag_summary.get(r["tag"], 0) + 1
                     total_tags += 1
+
+                    # Accumulate raw value for the profiler
+                    fp  = r["field_path"]
+                    tag = r["tag"]
+                    raw_val = fields.get(fp)
+                    if raw_val is not None:
+                        if fp not in profiler_buffer:
+                            profiler_buffer[fp] = {"tag": tag, "values": []}
+                        profiler_buffer[fp]["values"].append(raw_val)
+
                 producer.poll(0)
 
             if processed % 25 == 0 or processed == count:
@@ -295,6 +328,9 @@ def run(bootstrap, api_key, api_secret, source_topic, classifier_url, max_layer,
     finally:
         consumer.close()
         producer.flush()
+        if profiler_url and profiler_buffer:
+            print(f"\nPosting field profiles to profiler ({len(profiler_buffer)} fields)…")
+            post_to_profiler(profiler_url, source_topic, profiler_buffer, scanned_at)
 
     print()
     print(f"Done. Processed {processed} messages → {total_tags} tag detections.")
@@ -314,6 +350,8 @@ def main():
     parser.add_argument("--api-secret",      default=os.getenv("KAFKA_SECRET"))
     parser.add_argument("--topic",           default=os.getenv("SOURCE_TOPIC", "raw-messages"))
     parser.add_argument("--classifier-url",  default=os.getenv("CLASSIFIER_URL", "http://localhost:8000"))
+    parser.add_argument("--profiler-url",    default=os.getenv("PROFILER_URL", ""),
+                        help="Profiler service URL (default: $PROFILER_URL or empty to skip)")
     parser.add_argument("--max-layer",       type=int, default=int(os.getenv("CLASSIFIER_MAX_LAYER", "3")))
     parser.add_argument("--count",           type=int, default=200,
                         help="Max messages to read (default: 200)")
@@ -333,6 +371,7 @@ def main():
         api_secret     = args.api_secret,
         source_topic   = args.topic,
         classifier_url = args.classifier_url,
+        profiler_url   = args.profiler_url,
         max_layer      = args.max_layer,
         count          = args.count,
     )
