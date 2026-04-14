@@ -1,0 +1,29 @@
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# HuggingFace model cache
+.cache/
+
+# Java build output
+flink-scanner/target/
+flink-scanner/dependency-reduced-pom.xml
+
+# IDE
+.idea/
+.vscode/
+*.DS_Store
+flink-scanner/scan.env
